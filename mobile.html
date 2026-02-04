@@ -3,8 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <title>年会弹幕 - 发送端</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <style>
+    html, body {
+      height: 100%;
+      width: 100%;
+      overflow: hidden; /* 禁止页面滚动 */
+    }
+
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI";
@@ -14,8 +20,9 @@
     /* ===== 用户端样式 ===== */
     .user-page {
       position: relative;
-      height: 100vh;
-      width: 100vw;
+      height: 100%; /* Fallback */
+      height: 100dvh;
+      width: 100%;
       overflow: hidden;
       display: flex;
       flex-direction: column;
@@ -39,6 +46,7 @@
       padding: 16px;
       text-align: center;
       background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+      flex-shrink: 0;
     }
 
     .header h2 {
@@ -49,13 +57,11 @@
 
     /* 弹幕展示区（全屏漂浮） */
     .danmu-stage {
-      position: absolute;
-      top: 60px; /* 避开标题 */
-      left: 0;
-      right: 0;
-      bottom: 100px; /* 避开输入框 */
+      position: relative;
+      flex: 1; /* 占据剩余空间 */
+      width: 100%;
       z-index: 5;
-      pointer-events: none; /* 让点击穿透，不影响背景交互（如果有） */
+      pointer-events: none;
       overflow: hidden;
     }
 
@@ -85,13 +91,13 @@
 
     /* 底部输入区 */
     .input-area {
-      position: absolute;
-      bottom: 0;
-      left: 0;
-      right: 0;
+      position: relative;
+      flex-shrink: 0;
       z-index: 10;
       padding: 16px;
-      background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+      padding-bottom: max(16px, env(safe-area-inset-bottom)); /* 适配全面屏底部 */
+      background: rgba(0,0,0,0.6); /* 保证输入框可见 */
+      backdrop-filter: blur(4px);
     }
 
     .input-box {
@@ -177,9 +183,32 @@
 <div id="toast" class="toast"></div>
 
 <script src="js/config.js"></script>
+<!-- 引入 MQTT.js -->
+<script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 <script>
-  /** ===== 通信频道 ===== */
-  const channel = new BroadcastChannel("danmu_channel");
+  /** ===== 通信频道 (MQTT) ===== */
+  // 从 URL 参数获取 Topic
+  const urlParams = new URLSearchParams(window.location.search);
+  const topic = urlParams.get('topic') || CONFIG.MQTT_TOPIC; // Fallback
+  
+  // 简单生成一个 ID
+  const clientId = "user_" + Math.random().toString(16).substr(2, 8);
+
+  console.log("Connecting to MQTT Broker:", CONFIG.MQTT_BROKER);
+  console.log("Topic:", topic);
+
+  const client = mqtt.connect(CONFIG.MQTT_BROKER);
+
+  client.on('connect', () => {
+    console.log('MQTT Connected');
+    client.subscribe(topic);
+    showToast("已连接到弹幕墙");
+  });
+
+  client.on('error', (err) => {
+    console.error("MQTT Error:", err);
+    showToast("连接失败，请刷新重试");
+  });
 
   /** ===== 逻辑 ===== */
   // 从配置读取背景图
@@ -208,12 +237,15 @@
   // 手机屏幕较小，动态计算轨道数
   // 假设每条弹幕高 40px
   const TRACK_HEIGHT = 40;
-  const stageHeight = danmuStage.clientHeight || (window.innerHeight - 160);
-  const TRACK_COUNT = Math.floor(stageHeight / TRACK_HEIGHT);
+  // 注意：这里需要重新获取 danmuStage 高度，或者监听 resize
+  // 简单起见，取窗口高度的一半作为参考，或者直接用 random top
+  let stageHeight = window.innerHeight * 0.6; 
+  let TRACK_COUNT = Math.floor(stageHeight / TRACK_HEIGHT);
   let trackIndex = 0;
 
   // 待播放队列（高优先级，存放实时接收的用户弹幕）
   const pendingDanmus = [];
+  let isPaused = false;
 
   function pushDanmu(text, isMine = false) {
     const el = document.createElement("div");
@@ -222,12 +254,17 @@
     
     // 随机选择轨道，或者顺序循环
     const track = trackIndex % TRACK_COUNT;
-    el.style.top = track * TRACK_HEIGHT + "px";
+    // top 使用百分比可能更安全，或者 px
+    el.style.top = (track * TRACK_HEIGHT + 20) + "px"; // +20 padding
     
     // 随机速度 8s - 12s
     const duration = 8 + Math.random() * 4;
     el.style.animationDuration = `${duration}s`;
     
+    if (isPaused) {
+      el.style.animationPlayState = "paused";
+    }
+
     trackIndex++;
 
     danmuStage.appendChild(el);
@@ -253,10 +290,23 @@
 
     text = filterText(text);
 
-    channel.postMessage({ text, time: now });
+    // 发送给服务器
+    const msg = JSON.stringify({
+      type: 'danmu',
+      text: text,
+      time: now,
+      id: clientId
+    });
+    client.publish(topic, msg);
     
-    // 自己发的直接上屏
-    pushDanmu(text, true);
+    // 自己发的直接上屏 (可选：如果服务器回传太慢，本地先上屏)
+    // 这里为了确保同步，也可以等服务器回传，但为了体验，本地先上屏
+    // 并且标记 isMine
+    // pushDanmu(text, true); // socket.on('danmu') 会收到自己的，如果不去重，会显示两次
+    // 策略：本地不上屏，等服务器广播回来。或者本地上屏，忽略服务器回来的自己那条。
+    // Socket.IO 默认 broadcast 不包含自己，但 io.emit 包含自己。
+    // 在 server.js 中我使用了 io.emit，所以会包含自己。
+    // 所以这里不要本地 pushDanmu，否则会重复。
 
     input.value = "";
     lastSend = now;
@@ -272,49 +322,56 @@
   });
 
   // 监听广播
-  channel.onmessage = e => {
-    const { type, text, action, paused } = e.data;
+  client.on('message', (tpc, message) => {
+      try {
+        const msg = JSON.parse(message.toString());
 
-    // 处理控制指令
-    if (type === "control") {
-      if (action === "toggle") {
-        // 暂停/继续
-        document.querySelectorAll(".danmu").forEach(el => {
-          el.style.animationPlayState = paused ? "paused" : "running";
-        });
-        // 暂停时停止生成新弹幕（通过全局变量控制，这里简单起见，可以加个标志位）
-        isPaused = paused;
-        if (paused) showToast("管理员暂停了弹幕");
-        else showToast("弹幕继续飘动~");
-      } else if (action === "clear") {
-        // 清屏
-        document.querySelectorAll(".danmu").forEach(el => el.remove());
-        showToast("管理员清空了屏幕");
+        if (msg.type === 'danmu') {
+             // 判断是不是自己发的
+             const isMine = (msg.id === clientId); 
+             pushDanmu(msg.text, isMine);
+        } else if (msg.type === 'control') {
+             const { action, paused } = msg;
+             if (action === "toggle") {
+                isPaused = paused; // 更新本地状态
+                
+                if (paused) {
+                    showToast("管理员暂停了弹幕");
+                    document.querySelectorAll(".danmu").forEach(el => {
+                        el.style.animationPlayState = "paused";
+                    });
+                } else {
+                    showToast("弹幕继续飘动~");
+                    document.querySelectorAll(".danmu").forEach(el => {
+                        el.style.animationPlayState = "running";
+                    });
+                }
+             } else if (action === "clear") {
+                document.querySelectorAll(".danmu").forEach(el => el.remove());
+                showToast("管理员清空了屏幕");
+             }
+        }
+      } catch(e) {
+        console.error(e);
       }
-      return;
-    }
+  });
 
-    // 处理普通弹幕
-    if (text) {
-      pendingDanmus.push(text);
-    }
-  };
-
-  let isPaused = false;
   // 默认弹幕循环（手机端也播放，营造氛围）
   setInterval(() => {
     if (isPaused) return;
 
     let text;
-    // 优先播放实时队列
-    if (pendingDanmus.length > 0) {
-      text = pendingDanmus.shift();
-    } else {
-      // 闲时播放默认弹幕
-      text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
-    }
+    // 优先播放实时队列 (其实 socket.on 已经直接 push 了，pendingDanmus 没用上)
+    // 这里的 pendingDanmus 逻辑可以去掉了，直接 socket.on 就 push
+    // 只有默认弹幕需要 interval
+    
+    // 闲时播放默认弹幕
+    text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+    // 手机端少发点默认弹幕，免得乱
+    if(Math.random() > 0.5) return;
+    
     pushDanmu(text);
-  }, 2500); // 手机端稍微快一点点或保持一致
+  }, 3000); 
 
 </script>
 

@@ -83,6 +83,8 @@
     }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- 引入 MQTT.js -->
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 </head>
 <body>
 
@@ -91,12 +93,14 @@
   <div class="control-panel">
     <button id="toggle">⏸ 暂停</button>
     <button id="clear">🧹 清屏</button>
+    <button id="download" style="display: none;">📥 导出数据</button>
   </div>
   
   <!-- 二维码展示区 -->
   <div class="qr-container">
     <div id="qrcode"></div>
     <p>扫码发送弹幕</p>
+    <p id="topic-display" style="font-size: 10px; color: #aaa; margin-top: 4px;"></p>
   </div>
 </div>
 
@@ -109,25 +113,76 @@
   // 设置背景图
   document.getElementById("app").style.backgroundImage = `url(${BG_IMAGE})`;
 
-  /** ===== 通信频道 ===== */
-  const channel = new BroadcastChannel("danmu_channel");
+  /** ===== 通信频道 (MQTT) ===== */
+  // 优先使用 CONFIG 中的固定 Topic，方便调试
+  // 如果需要每次随机，可以在 config.js 中修改，或者这里覆盖
+  let topic = CONFIG.MQTT_TOPIC;
+  
+  // 显示当前 Topic
+  document.getElementById("topic-display").innerText = "频道: " + topic.split("/").pop(); // 只显示最后一段
+  
+  console.log("Connecting to MQTT Broker:", CONFIG.MQTT_BROKER);
+  console.log("Topic:", topic);
+
+  const client = mqtt.connect(CONFIG.MQTT_BROKER);
+
+  client.on('connect', () => {
+    console.log('MQTT Connected');
+    client.subscribe(topic, (err) => {
+      if (!err) {
+        console.log('Subscribed to', topic);
+      }
+    });
+  });
 
   /** ===== 逻辑 ===== */
   const app = document.getElementById("app");
   let track = 0;
   let paused = false;
+  let lastUserDanmuTime = 0; // 上次播放用户弹幕的时间
 
   // 待播放队列（高优先级，存放实时接收的用户弹幕）
   const pendingDanmus = [];
   // 用户弹幕历史（用于记录和回放）
-  const userDanmuHistory = [];
+  // 尝试从 LocalStorage 读取历史
+  let userDanmuHistory = [];
+  try {
+    const saved = localStorage.getItem("danmu_history");
+    if (saved) userDanmuHistory = JSON.parse(saved);
+  } catch(e) {}
 
-  function pushDanmu(text) {
+  function saveHistory() {
+      // 只保留最近 200 条
+      if (userDanmuHistory.length > 200) {
+          userDanmuHistory = userDanmuHistory.slice(-200);
+      }
+      localStorage.setItem("danmu_history", JSON.stringify(userDanmuHistory));
+  }
+
+  // 获取随机亮色
+  function getRandomColor() {
+    const letters = '89ABCDEF'; // 避免太暗的颜色
+    let color = '#';
+    for (let i = 0; i < 6; i++) {
+      color += letters[Math.floor(Math.random() * 16)];
+    }
+    return color;
+  }
+
+  function pushDanmu(text, isUser = false) {
     const el = document.createElement("div");
     el.className = "danmu";
     el.innerText = text;
     el.style.top = (track % TRACK_COUNT) * TRACK_HEIGHT + "px";
     el.style.animationDuration = "10s";
+    
+    // 4. 弹幕颜色多样化
+    // 如果是用户发的，或者随机给个颜色 (这里全随机，也可保留白色)
+    // 需求：弹幕字体改成不是单一白色
+    el.style.color = getRandomColor();
+    // 稍微加点文字阴影区分
+    el.style.textShadow = `0 0 4px rgba(0,0,0,0.8)`;
+
     track++;
 
     if (paused) {
@@ -144,7 +199,8 @@
     document.getElementById("toggle").innerText = paused ? "▶ 继续" : "⏸ 暂停";
 
     // 广播暂停/继续状态
-    channel.postMessage({ type: "control", action: "toggle", paused });
+    const msg = JSON.stringify({ type: "control", action: "toggle", paused });
+    client.publish(topic, msg);
 
     document.querySelectorAll(".danmu").forEach(el => {
       el.style.animationPlayState = paused ? "paused" : "running";
@@ -154,26 +210,82 @@
   // 清屏
   document.getElementById("clear").onclick = () => {
     // 广播清屏指令
-    channel.postMessage({ type: "control", action: "clear" });
+    const msg = JSON.stringify({ type: "control", action: "clear" });
+    client.publish(topic, msg);
 
     document.querySelectorAll(".danmu").forEach(el => el.remove());
   };
 
-  // 弹幕循环播放器
-  setInterval(() => {
-    if (paused) return;
+  // 导出数据
+  document.getElementById("download").onclick = () => {
+    if (userDanmuHistory.length === 0) {
+        alert("暂无数据可导出");
+        return;
+    }
+    
+    // 生成 TXT 内容
+    const content = userDanmuHistory.map(text => {
+        return `${new Date().toLocaleString()} | ${text}`;
+    }).join("\n");
+    
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `danmu_backup_${new Date().toISOString().slice(0,10)}.txt`;
+    a.click();
+    
+    URL.revokeObjectURL(url);
+  };
+
+  // 3. 动态速度播放循环
+  function playLoop() {
+    if (paused) {
+      setTimeout(playLoop, 500);
+      return;
+    }
 
     let text;
+    let nextDelay = 3000; // 默认间隔
+
     // 优先播放实时队列
     if (pendingDanmus.length > 0) {
       text = pendingDanmus.shift();
+      lastUserDanmuTime = Date.now();
+      nextDelay = 1000; // 用户弹幕发送快一点，1秒一条
+      pushDanmu(text, true);
     } else {
       // 闲时播放默认弹幕
-      text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+      // 如果最近有用户弹幕（比如 5秒内），则暂停播放默认弹幕，或者减慢速度
+      const timeSinceLastUser = Date.now() - lastUserDanmuTime;
+      
+      if (timeSinceLastUser < 5000) {
+        // 感知到发送弹幕，放慢默认弹幕 (或者暂时不发)
+        // 这里选择：暂时不发，或者极慢
+        nextDelay = 2000; 
+        // 不 pushText，只是空转等待，或者 push 但间隔长
+        // 用户需求：如果有感知到发送弹幕放慢默认弹幕展示的速度
+        // 策略：如果最近有用户弹幕，我们就不发默认弹幕了，等冷场了再发
+        // 或者：发，但是间隔 5秒
+        if (Math.random() > 0.7) { // 30% 概率发一条，降低密度
+             text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+             pushDanmu(text);
+             nextDelay = 5000;
+        }
+      } else {
+        // 正常冷场，3秒一条
+        text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+        pushDanmu(text);
+        nextDelay = 3000;
+      }
     }
     
-    pushDanmu(text);
-  }, 3000);
+    setTimeout(playLoop, nextDelay);
+  }
+  
+  // 启动循环
+  playLoop();
 
   // 定时检查是否需要回放用户弹幕
   // 规则：每隔 REPLAY_INTERVAL，如果收集到的用户弹幕数量 < REPLAY_THRESHOLD，则将它们重新加入待播放队列
@@ -187,20 +299,64 @@
   }, CONFIG.REPLAY_INTERVAL);
 
   // 监听广播
-  channel.onmessage = e => {
-    // 如果是弹幕消息
-    if (e.data.text) {
-      const text = e.data.text;
-      // 实时弹幕加入高优先级队列
-      pendingDanmus.push(text);
-      // 记录到历史
-      userDanmuHistory.push(text);
+  client.on('message', (tpc, message) => {
+    try {
+      const msg = JSON.parse(message.toString());
+      
+      // 处理弹幕
+      if (msg.type === 'danmu' && msg.text) {
+        const text = msg.text;
+        // 实时弹幕加入高优先级队列
+        pendingDanmus.push(text);
+        // 记录到历史
+        userDanmuHistory.push(text);
+        saveHistory();
+      }
+      
+      // 处理控制指令 (如果是别的端发的)
+      // 注意：自己发的也会收到，这里需要区分吗？
+      // MQTT 默认会收到自己发的消息。
+      // 上面的 toggle/clear 按钮点击时已经处理了本地 UI，所以这里如果收到，可能会重复处理。
+      // 但 toggle 是幂等的(set paused)，clear 也是幂等的。
+      // 为了避免重复动画切换，最好判断一下。或者不管，因为 paused 状态一致。
+      
+    } catch(e) {
+      console.error(e);
     }
-  };
+  });
 
   /** ===== 生成二维码 ===== */
+  // 动态生成指向 mobile.html 的链接
+  // 静态部署时，mobile.html 就在同级目录
+  // 我们需要把当前的 Topic 传递给 mobile 端，否则它不知道连哪个 Topic
+  // 通过 URL 参数传递 topic
+  
+  const currentUrl = window.location.href;
+  let mobileUrl;
+
+  // 处理 file:// 协议
+  if (currentUrl.startsWith('file://')) {
+    // 如果是本地文件打开，直接替换文件名
+    // 注意：手机无法直接访问电脑的 file:// 路径，必须部署或使用 live server
+    // 这里为了逻辑完整生成一个相对路径，但实际上手机扫码打不开 file://
+    // 我们提示用户最好用 Web Server
+    const path = currentUrl.substring(0, currentUrl.lastIndexOf('/'));
+    mobileUrl = path + '/mobile.html' + `?topic=${encodeURIComponent(topic)}`;
+    
+    // 如果是 file 协议，给个提示
+    console.warn("注意：当前是 file:// 协议，手机扫码可能无法直接访问。建议使用 http 服务器 (如 Live Server, GitHub Pages).");
+  } else {
+    // HTTP/HTTPS 协议
+    const urlObj = new URL(currentUrl);
+    // 替换 screen.html 为 mobile.html
+    const pathname = urlObj.pathname.replace(/screen\.html$/, 'mobile.html');
+    mobileUrl = urlObj.origin + pathname + `?topic=${encodeURIComponent(topic)}`;
+  }
+  
+  console.log("Mobile URL:", mobileUrl);
+  
   new QRCode(document.getElementById("qrcode"), {
-    text: "https://liuzheyan.github.io/event-wall/mobile.html",
+    text: mobileUrl,
     width: 128,
     height: 128,
     colorDark : "#000000",

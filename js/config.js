@@ -11,14 +11,24 @@ const CONFIG = {
   // 轨道高度
   TRACK_HEIGHT: 56,
   // 背景图
-  // BG_IMAGE: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819",
   BG_IMAGE: "img/photo.jpg",
   
   // === 新增需求配置 ===
   // 循环回放检查间隔（默认3分钟 = 180000ms）
   REPLAY_INTERVAL: 3 * 60 * 1000,
   // 触发循环回放的阈值（用户弹幕少于此数量时触发）
-  REPLAY_THRESHOLD: 50
+  REPLAY_THRESHOLD: 50,
+
+  /** ===== MQTT 配置 (纯静态部署使用) ===== */
+  // 使用公共免费 Broker (注意：数据公开，仅用于演示)
+  // 你也可以换成自己的 MQTT 服务
+  MQTT_BROKER: "wss://broker.emqx.io:8084/mqtt",
+  // 随机生成一个 Topic 后缀，避免与他人冲突
+  // 如果需要固定，可以改为 "event-wall/my-company"
+  // 注意：为了方便本地调试（Mobile 和 PC 打开各自生成随机数会导致连不上），
+  // 这里暂时改为固定值。正式使用建议在 screen.html 中动态生成并展示给用户。
+  MQTT_TOPIC: "event-wall/public-demo-fixed-channel"
+
 };
 
 /** ===== 违禁词库（已扩展） ===== */
