@@ -61,7 +61,28 @@
       background: rgba(0,0,0,0.6);
       color: #fff;
     }
+
+    /* 二维码容器 */
+    .qr-container {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      z-index: 20;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 15px;
+      border-radius: 8px;
+      text-align: center;
+      backdrop-filter: blur(4px);
+    }
+    
+    .qr-container p {
+      margin: 10px 0 0;
+      font-size: 14px;
+      color: #fff;
+      font-weight: 500;
+    }
   </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 </head>
 <body>
 
@@ -70,6 +91,12 @@
   <div class="control-panel">
     <button id="toggle">⏸ 暂停</button>
     <button id="clear">🧹 清屏</button>
+  </div>
+  
+  <!-- 二维码展示区 -->
+  <div class="qr-container">
+    <div id="qrcode"></div>
+    <p>扫码发送弹幕</p>
   </div>
 </div>
 
@@ -170,6 +197,16 @@
       userDanmuHistory.push(text);
     }
   };
+
+  /** ===== 生成二维码 ===== */
+  new QRCode(document.getElementById("qrcode"), {
+    text: "https://liuzheyan.github.io/event-wall/mobile.html",
+    width: 128,
+    height: 128,
+    colorDark : "#000000",
+    colorLight : "#ffffff",
+    correctLevel : QRCode.CorrectLevel.H
+  });
 
 </script>
 
