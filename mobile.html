@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>年会弹幕 - 发送端</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI";
+      color: #fff;
+    }
+
+    /* ===== 用户端样式 ===== */
+    .user-page {
+      position: relative;
+      height: 100vh;
+      width: 100vw;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-sizing: border-box;
+      /* 背景图将通过 JS 动态设置 */
+      background-size: cover;
+      background-position: center;
+    }
+
+    .mask {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.4);
+      z-index: 0;
+    }
+
+    /* 顶部标题区 */
+    .header {
+      position: relative;
+      z-index: 10;
+      padding: 16px;
+      text-align: center;
+      background: linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+    }
+
+    .header h2 {
+      margin: 0;
+      font-size: 20px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+    }
+
+    /* 弹幕展示区（全屏漂浮） */
+    .danmu-stage {
+      position: absolute;
+      top: 60px; /* 避开标题 */
+      left: 0;
+      right: 0;
+      bottom: 100px; /* 避开输入框 */
+      z-index: 5;
+      pointer-events: none; /* 让点击穿透，不影响背景交互（如果有） */
+      overflow: hidden;
+    }
+
+    .danmu {
+      position: absolute;
+      white-space: nowrap;
+      font-size: 20px; /* 手机端稍小一点 */
+      color: #fff;
+      animation: move linear forwards;
+      text-shadow: 0 0 4px rgba(0,0,0,0.8);
+      will-change: transform;
+    }
+
+    .danmu.mine {
+      color: #86efac; /* 自己发的弹幕高亮 */
+      border: 1px solid rgba(134, 239, 172, 0.5);
+      background: rgba(0, 0, 0, 0.3);
+      padding: 2px 8px;
+      border-radius: 12px;
+      z-index: 6; /* 稍微靠前 */
+    }
+
+    @keyframes move {
+      from { transform: translateX(100vw); }
+      to { transform: translateX(-100%); }
+    }
+
+    /* 底部输入区 */
+    .input-area {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 10;
+      padding: 16px;
+      background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+    }
+
+    .input-box {
+      display: flex;
+    }
+
+    .input-box input {
+      flex: 1;
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      outline: none;
+      background: rgba(255, 255, 255, 0.9);
+      color: #333;
+    }
+
+    .input-box button {
+      margin-left: 8px;
+      padding: 12px 16px;
+      font-size: 16px;
+      border-radius: 6px;
+      border: none;
+      background: #22c55e;
+      color: #000;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .tip {
+      text-align: center;
+      font-size: 12px;
+      color: #cbd5e1;
+      margin-top: 8px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+    }
+
+    /* Toast 提示框 */
+    .toast {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .toast.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app">
+  <div class="user-page" id="page">
+    <div class="mask"></div>
+    
+    <div class="header">
+      <!-- <h2>年会弹幕</h2> -->
+    </div>
+
+    <!-- 弹幕漂浮层 -->
+    <div class="danmu-stage" id="danmuStage"></div>
+
+    <div class="input-area">
+      <div class="input-box">
+        <input id="input" placeholder="说点什么吧（≤30字）" />
+        <button id="send">发送</button>
+      </div>
+      <!-- <div class="tip">匿回车发送 · 3 秒限发 1 条</div> -->
+    </div>
+  </div>
+</div>
+
+<!-- Toast 容器 -->
+<div id="toast" class="toast"></div>
+
+<script src="js/config.js"></script>
+<script>
+  /** ===== 通信频道 ===== */
+  const channel = new BroadcastChannel("danmu_channel");
+
+  /** ===== 逻辑 ===== */
+  // 从配置读取背景图
+  const { BG_IMAGE } = CONFIG;
+  document.getElementById("page").style.backgroundImage = `url(${BG_IMAGE})`;
+
+  let lastSend = 0;
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const danmuStage = document.getElementById("danmuStage");
+  const toastEl = document.getElementById("toast");
+
+  // 显示 Toast
+  let toastTimer;
+  function showToast(msg) {
+    toastEl.innerText = msg;
+    toastEl.classList.add("show");
+    
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastEl.classList.remove("show");
+    }, 2000);
+  }
+
+  // 弹幕轨道控制
+  // 手机屏幕较小，动态计算轨道数
+  // 假设每条弹幕高 40px
+  const TRACK_HEIGHT = 40;
+  const stageHeight = danmuStage.clientHeight || (window.innerHeight - 160);
+  const TRACK_COUNT = Math.floor(stageHeight / TRACK_HEIGHT);
+  let trackIndex = 0;
+
+  // 待播放队列（高优先级，存放实时接收的用户弹幕）
+  const pendingDanmus = [];
+
+  function pushDanmu(text, isMine = false) {
+    const el = document.createElement("div");
+    el.className = `danmu ${isMine ? "mine" : ""}`;
+    el.innerText = text;
+    
+    // 随机选择轨道，或者顺序循环
+    const track = trackIndex % TRACK_COUNT;
+    el.style.top = track * TRACK_HEIGHT + "px";
+    
+    // 随机速度 8s - 12s
+    const duration = 8 + Math.random() * 4;
+    el.style.animationDuration = `${duration}s`;
+    
+    trackIndex++;
+
+    danmuStage.appendChild(el);
+    el.addEventListener("animationend", () => el.remove());
+  }
+
+  function sendMessage() {
+    const now = Date.now();
+    if (now - lastSend < CONFIG.SEND_INTERVAL) {
+      showToast("太频繁啦，稍等一会");
+      return;
+    }
+
+    let text = input.value.trim();
+    if (!text) {
+      showToast("写点什么再发送吧~");
+      return;
+    }
+    if (text.length > CONFIG.MAX_LEN) {
+      showToast(`最多输入 ${CONFIG.MAX_LEN} 个字哦`);
+      return;
+    }
+
+    text = filterText(text);
+
+    channel.postMessage({ text, time: now });
+    
+    // 自己发的直接上屏
+    pushDanmu(text, true);
+
+    input.value = "";
+    lastSend = now;
+  }
+
+  sendBtn.onclick = sendMessage;
+
+  input.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+
+  // 监听广播
+  channel.onmessage = e => {
+    const { type, text, action, paused } = e.data;
+
+    // 处理控制指令
+    if (type === "control") {
+      if (action === "toggle") {
+        // 暂停/继续
+        document.querySelectorAll(".danmu").forEach(el => {
+          el.style.animationPlayState = paused ? "paused" : "running";
+        });
+        // 暂停时停止生成新弹幕（通过全局变量控制，这里简单起见，可以加个标志位）
+        isPaused = paused;
+        if (paused) showToast("管理员暂停了弹幕");
+        else showToast("弹幕继续飘动~");
+      } else if (action === "clear") {
+        // 清屏
+        document.querySelectorAll(".danmu").forEach(el => el.remove());
+        showToast("管理员清空了屏幕");
+      }
+      return;
+    }
+
+    // 处理普通弹幕
+    if (text) {
+      pendingDanmus.push(text);
+    }
+  };
+
+  let isPaused = false;
+  // 默认弹幕循环（手机端也播放，营造氛围）
+  setInterval(() => {
+    if (isPaused) return;
+
+    let text;
+    // 优先播放实时队列
+    if (pendingDanmus.length > 0) {
+      text = pendingDanmus.shift();
+    } else {
+      // 闲时播放默认弹幕
+      text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+    }
+    pushDanmu(text);
+  }, 2500); // 手机端稍微快一点点或保持一致
+
+</script>
+
+</body>
+</html>

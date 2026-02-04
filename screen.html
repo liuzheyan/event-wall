@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>年会弹幕 - 大屏端</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI";
+      color: #fff;
+    }
+
+    /* ===== 大屏端样式 ===== */
+    .screen-page {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      background-size: cover;
+      background-position: center;
+    }
+
+    .mask {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 0;
+    }
+
+    .danmu {
+      position: absolute;
+      z-index: 1;
+      white-space: nowrap;
+      font-size: 26px;
+      color: #fff;
+      animation: move linear forwards;
+      text-shadow: 0 0 8px rgba(0,0,0,0.8);
+    }
+
+    @keyframes move {
+      from { transform: translateX(100vw); }
+      to { transform: translateX(-100%); }
+    }
+
+    /* 控制面板 */
+    .control-panel {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      z-index: 10;
+    }
+
+    .control-panel button {
+      margin-left: 6px;
+      padding: 6px 10px;
+      font-size: 14px;
+      border-radius: 4px;
+      border: none;
+      cursor: pointer;
+      background: rgba(0,0,0,0.6);
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+<div id="app" class="screen-page">
+  <div class="mask"></div>
+  <div class="control-panel">
+    <button id="toggle">⏸ 暂停</button>
+    <button id="clear">🧹 清屏</button>
+  </div>
+</div>
+
+<script src="js/config.js"></script>
+<script>
+  /** ===== 配置 ===== */
+  // 从 CONFIG 对象中读取
+  const { TRACK_COUNT, TRACK_HEIGHT, BG_IMAGE } = CONFIG;
+
+  // 设置背景图
+  document.getElementById("app").style.backgroundImage = `url(${BG_IMAGE})`;
+
+  /** ===== 通信频道 ===== */
+  const channel = new BroadcastChannel("danmu_channel");
+
+  /** ===== 逻辑 ===== */
+  const app = document.getElementById("app");
+  let track = 0;
+  let paused = false;
+
+  // 待播放队列（高优先级，存放实时接收的用户弹幕）
+  const pendingDanmus = [];
+  // 用户弹幕历史（用于记录和回放）
+  const userDanmuHistory = [];
+
+  function pushDanmu(text) {
+    const el = document.createElement("div");
+    el.className = "danmu";
+    el.innerText = text;
+    el.style.top = (track % TRACK_COUNT) * TRACK_HEIGHT + "px";
+    el.style.animationDuration = "10s";
+    track++;
+
+    if (paused) {
+      el.style.animationPlayState = "paused";
+    }
+
+    app.appendChild(el);
+    el.addEventListener("animationend", () => el.remove());
+  }
+
+  // 控制暂停/继续
+  document.getElementById("toggle").onclick = () => {
+    paused = !paused;
+    document.getElementById("toggle").innerText = paused ? "▶ 继续" : "⏸ 暂停";
+
+    // 广播暂停/继续状态
+    channel.postMessage({ type: "control", action: "toggle", paused });
+
+    document.querySelectorAll(".danmu").forEach(el => {
+      el.style.animationPlayState = paused ? "paused" : "running";
+    });
+  };
+
+  // 清屏
+  document.getElementById("clear").onclick = () => {
+    // 广播清屏指令
+    channel.postMessage({ type: "control", action: "clear" });
+
+    document.querySelectorAll(".danmu").forEach(el => el.remove());
+  };
+
+  // 弹幕循环播放器
+  setInterval(() => {
+    if (paused) return;
+
+    let text;
+    // 优先播放实时队列
+    if (pendingDanmus.length > 0) {
+      text = pendingDanmus.shift();
+    } else {
+      // 闲时播放默认弹幕
+      text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+    }
+    
+    pushDanmu(text);
+  }, 3000);
+
+  // 定时检查是否需要回放用户弹幕
+  // 规则：每隔 REPLAY_INTERVAL，如果收集到的用户弹幕数量 < REPLAY_THRESHOLD，则将它们重新加入待播放队列
+  setInterval(() => {
+    if (userDanmuHistory.length > 0 && userDanmuHistory.length < CONFIG.REPLAY_THRESHOLD) {
+      console.log("触发用户弹幕循环回放", userDanmuHistory);
+      // 将历史弹幕打乱后加入队列
+      const shuffled = [...userDanmuHistory].sort(() => 0.5 - Math.random());
+      pendingDanmus.push(...shuffled);
+    }
+  }, CONFIG.REPLAY_INTERVAL);
+
+  // 监听广播
+  channel.onmessage = e => {
+    // 如果是弹幕消息
+    if (e.data.text) {
+      const text = e.data.text;
+      // 实时弹幕加入高优先级队列
+      pendingDanmus.push(text);
+      // 记录到历史
+      userDanmuHistory.push(text);
+    }
+  };
+
+</script>
+
+</body>
+</html>
