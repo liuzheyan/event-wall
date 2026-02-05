@@ -32,7 +32,7 @@
       position: absolute;
       z-index: 1;
       white-space: nowrap;
-      font-size: 26px;
+      font-size: 24px;
       color: #fff;
       animation: move linear forwards;
       text-shadow: 0 0 8px rgba(0,0,0,0.8);
@@ -131,6 +131,12 @@
     client.subscribe(topic, (err) => {
       if (!err) {
         console.log('Subscribed to', topic);
+        // === 新增：大屏端上线广播 ===
+        // 告诉所有手机端：大屏已在线，停止你们的本地循环，听我指挥
+        try {
+            client.publish(topic, JSON.stringify({ type: "control", action: "sync_start" }));
+        } catch(e) {}
+        // === 结束新增 ===
       }
     });
   });
@@ -154,30 +160,23 @@
   function getSmartTrack() {
     const now = Date.now();
     
-    // 1. 寻找空闲轨道（2秒内未使用的）
-    const candidates = [];
-    for (let i = 0; i < TRACK_COUNT; i++) {
-      if (now - lastTrackTime[i] > 2000) {
-        candidates.push(i);
-      }
-    }
+    // 优化：总是优先选择空闲时间最长的轨道
+    // 计算每个轨道的空闲时间
+    const trackStates = lastTrackTime.map((time, index) => ({
+        index,
+        idleTime: now - time
+    }));
 
-    let selectedTrack;
-    if (candidates.length > 0) {
-      // 随机选一个空闲的
-      selectedTrack = candidates[Math.floor(Math.random() * candidates.length)];
-    } else {
-      // 2. 如果都忙，选最久没用的那个 (LRU)
-      let minTime = Infinity;
-      let minIndex = 0;
-      for (let i = 0; i < TRACK_COUNT; i++) {
-        if (lastTrackTime[i] < minTime) {
-          minTime = lastTrackTime[i];
-          minIndex = i;
-        }
-      }
-      selectedTrack = minIndex;
-    }
+    // 按空闲时间降序排列 (空闲越久越靠前)
+    trackStates.sort((a, b) => b.idleTime - a.idleTime);
+
+    // 为了保持一定的随机性，不总是选第一名，而是从前几名里随机选
+    // 比如选前 4 名 (或者总数的 1/3)
+    const candidateCount = Math.max(1, Math.floor(TRACK_COUNT / 3));
+    const candidates = trackStates.slice(0, candidateCount);
+    
+    const selected = candidates[Math.floor(Math.random() * candidates.length)];
+    const selectedTrack = selected.index;
 
     // 更新时间
     lastTrackTime[selectedTrack] = now;
@@ -405,8 +404,106 @@
     setTimeout(playLoop, nextDelay);
   }
   
-  // 启动循环
-  // playLoop(); // 移动到脚本末尾，防止变量未初始化导致报错
+  // === 新增：Loading 状态与图片预加载兜底 ===
+  (function() {
+    // 1. 注入 Loading CSS
+    const style = document.createElement('style');
+    style.innerHTML = `
+      ._fix_loading_overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: #000;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        transition: opacity 0.5s ease;
+      }
+      ._fix_loading_spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: _fix_spin 1s ease-in-out infinite;
+      }
+      ._fix_loading_text {
+        margin-top: 16px;
+        color: #fff;
+        font-size: 14px;
+        opacity: 0.8;
+      }
+      @keyframes _fix_spin {
+        to { transform: rotate(360deg); }
+      }
+      ._fix_fade_out {
+        opacity: 0;
+        pointer-events: none;
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 2. 插入 Loading HTML
+    const overlay = document.createElement('div');
+    overlay.className = '_fix_loading_overlay';
+    overlay.innerHTML = `
+      <div class="_fix_loading_spinner"></div>
+      <div class="_fix_loading_text">资源加载中...</div>
+    `;
+    document.body.appendChild(overlay);
+
+    // 3. 图片预加载与移除逻辑
+    function removeLoading() {
+      overlay.classList.add('_fix_fade_out');
+      setTimeout(() => {
+        if (overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+        // 确保启动循环 (如果之前被阻塞)
+        if (typeof playLoop === 'function' && !window._hasStarted) {
+             window._hasStarted = true;
+             playLoop();
+        }
+      }, 500);
+    }
+
+    // 获取背景图 URL (从 CONFIG 中)
+    if (typeof CONFIG !== 'undefined' && CONFIG.BG_IMAGE) {
+      console.log("[Fix] Start preloading image:", CONFIG.BG_IMAGE);
+      const img = new Image();
+      img.onload = () => {
+        console.log("[Fix] Image loaded successfully");
+        removeLoading();
+      };
+      img.onerror = (e) => {
+        console.error("[Fix] Image load failed", e);
+        removeLoading(); 
+      };
+      img.src = CONFIG.BG_IMAGE;
+
+      // 超时兜底 (5秒)
+      setTimeout(() => {
+        if (!overlay.classList.contains('_fix_fade_out')) {
+          console.warn("[Fix] Loading timeout");
+          removeLoading();
+        }
+      }, 5000);
+    } else {
+      removeLoading();
+    }
+  })();
+  // === 结束新增 ===
+
+  // 启动循环 (改为由 Loading 回调触发，或者兜底触发)
+  // 为了防止 Loading 失败导致不运行，这里做一个延迟兜底
+  setTimeout(() => {
+      if (!window._hasStarted) {
+          window._hasStarted = true;
+          playLoop();
+      }
+  }, 1000);
+</script>
 
 
   // === 新增：页面恢复保护机制 ===
@@ -455,6 +552,8 @@
 
   // 定时检查是否需要回放用户弹幕
   // 规则：每隔 REPLAY_INTERVAL，如果收集到的用户弹幕数量 < REPLAY_THRESHOLD，则将它们重新加入待播放队列
+  /* 
+  // 屏蔽用户弹幕回放，只轮播默认库
   setInterval(() => {
     if (userDanmuHistory.length > 0 && userDanmuHistory.length < CONFIG.REPLAY_THRESHOLD) {
       console.log("触发用户弹幕循环回放", userDanmuHistory);
@@ -463,6 +562,7 @@
       pendingDanmus.push(...shuffled.map(t => ({ text: t, source: 'replay' })));
     }
   }, CONFIG.REPLAY_INTERVAL);
+  */
 
   // 监听广播
   client.on('message', (tpc, message) => {

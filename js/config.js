@@ -11,7 +11,9 @@ const CONFIG = {
   // 设置为 12
   TRACK_COUNT: 12,
   // 轨道高度
-  TRACK_HEIGHT: 56,
+  // 修改：进一步减小轨道高度，彻底避开右下角二维码
+  // 12 * 35 = 420px (确保只占屏幕上部区域)
+  TRACK_HEIGHT: 35,
   // 背景图
   BG_IMAGE: "img/photo.jpg",
   
