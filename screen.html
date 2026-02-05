@@ -146,6 +146,45 @@
   // 用户弹幕历史（用于记录和回放）
   // 尝试从 LocalStorage 读取历史
   let userDanmuHistory = [];
+
+  // === 轨道管理系统 ===
+  // 记录每个轨道上次使用的时间
+  const lastTrackTime = new Array(TRACK_COUNT).fill(0);
+
+  function getSmartTrack() {
+    const now = Date.now();
+    
+    // 1. 寻找空闲轨道（2秒内未使用的）
+    const candidates = [];
+    for (let i = 0; i < TRACK_COUNT; i++) {
+      if (now - lastTrackTime[i] > 2000) {
+        candidates.push(i);
+      }
+    }
+
+    let selectedTrack;
+    if (candidates.length > 0) {
+      // 随机选一个空闲的
+      selectedTrack = candidates[Math.floor(Math.random() * candidates.length)];
+    } else {
+      // 2. 如果都忙，选最久没用的那个 (LRU)
+      let minTime = Infinity;
+      let minIndex = 0;
+      for (let i = 0; i < TRACK_COUNT; i++) {
+        if (lastTrackTime[i] < minTime) {
+          minTime = lastTrackTime[i];
+          minIndex = i;
+        }
+      }
+      selectedTrack = minIndex;
+    }
+
+    // 更新时间
+    lastTrackTime[selectedTrack] = now;
+    return selectedTrack;
+  }
+  // === 结束轨道管理 ===
+
   try {
     const saved = localStorage.getItem("danmu_history");
     if (saved) userDanmuHistory = JSON.parse(saved);
@@ -164,22 +203,46 @@
     const letters = '89ABCDEF'; // 避免太暗的颜色
     let color = '#';
     for (let i = 0; i < 6; i++) {
-      color += letters[Math.floor(Math.random() * 16)];
+      // 修复：字符集长度为 8
+      color += letters[Math.floor(Math.random() * 8)];
     }
     return color;
   }
 
-  function pushDanmu(text, isUser = false) {
+  function pushDanmu(text, isUser = false, options = {}) {
+    // === 新增：后台不渲染 ===
+    if (document.hidden) return;
+    // === 结束新增 ===
+
+    // === 新增：恢复保护拦截 ===
+    if (shouldThrottle()) {
+        console.log("恢复保护期：拦截一条弹幕", text);
+        return; 
+    }
+    // === 结束新增 ===
+
     const el = document.createElement("div");
     el.className = "danmu";
     el.innerText = text;
-    el.style.top = (track % TRACK_COUNT) * TRACK_HEIGHT + "px";
+    
+    // 修改为随机轨道
+    // 优先使用 options 中的 track
+    // 如果没有传入 track，使用智能分配
+    const randomTrack = (typeof options.track === 'number') ? options.track : getSmartTrack();
+    
+    // 如果是外部传入的 track，更新占用时间，防止本地生成的撞车
+    if (typeof options.track === 'number' && randomTrack < TRACK_COUNT) {
+        lastTrackTime[randomTrack] = Date.now();
+    }
+
+    el.style.top = randomTrack * TRACK_HEIGHT + "px";
+    
     el.style.animationDuration = "10s";
     
     // 4. 弹幕颜色多样化
     // 如果是用户发的，或者随机给个颜色 (这里全随机，也可保留白色)
-    // 需求：弹幕字体改成不是单一白色
-    el.style.color = getRandomColor();
+    // 优先使用 options 中的 color
+    el.style.color = options.color || getRandomColor();
     // 稍微加点文字阴影区分
     el.style.textShadow = `0 0 4px rgba(0,0,0,0.8)`;
 
@@ -251,10 +314,35 @@
 
     // 优先播放实时队列
     if (pendingDanmus.length > 0) {
-      text = pendingDanmus.shift();
+      const item = pendingDanmus.shift();
+      // 兼容对象结构 { text, source, track, color }
+      text = (typeof item === 'object') ? item.text : item;
+      const isReplay = (typeof item === 'object' && item.source === 'replay');
+      
+      // 如果没有携带参数（例如回放），则在此处生成，确保渲染和广播一致
+      let track = (typeof item === 'object') ? item.track : undefined;
+      let color = (typeof item === 'object') ? item.color : undefined;
+      
+      if (track === undefined) track = getSmartTrack();
+      if (!color) color = getRandomColor();
+
       lastUserDanmuTime = Date.now();
       nextDelay = 1000; // 用户弹幕发送快一点，1秒一条
-      pushDanmu(text, true);
+      
+      // 使用确定好的参数渲染
+      pushDanmu(text, true, { track, color });
+
+      // 如果是回放消息，广播给手机端，携带参数
+      if (isReplay) {
+         try {
+             client.publish(topic, JSON.stringify({
+                 type: 'sys_danmu',
+                 text: text,
+                 track: track,
+                 color: color
+             }));
+         } catch(e) {}
+      }
     } else {
       // 闲时播放默认弹幕
       // 如果最近有用户弹幕（比如 5秒内），则暂停播放默认弹幕，或者减慢速度
@@ -270,20 +358,43 @@
         // 或者：发，但是间隔 5秒
         if (Math.random() > 0.7) { // 30% 概率发一条，降低密度
              text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
-             pushDanmu(text);
+             
+             // 生成一致的参数
+              const track = getSmartTrack();
+              const color = getRandomColor();
+              
+              pushDanmu(text, true, { track, color });
+             
+             // 广播给手机端，确保一致性
+             try {
+                client.publish(topic, JSON.stringify({
+                    type: 'sys_danmu',
+                    text: text,
+                    track: track,
+                    color: color
+                }));
+             } catch(e) {}
+
              nextDelay = 5000;
         }
       } else {
         // 正常冷场，3秒一条
         text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
-        pushDanmu(text);
+        
+        // 生成一致的参数
+         const track = getSmartTrack();
+         const color = getRandomColor();
+ 
+         pushDanmu(text, true, { track, color });
         
         // 广播这条默认弹幕给手机端显示，保持内容同步
         // 使用特殊类型以免被大屏端自己重复处理为用户弹幕
         try {
             client.publish(topic, JSON.stringify({
                 type: 'sys_danmu',
-                text: text
+                text: text,
+                track: track,
+                color: color
             }));
         } catch(e) {}
 
@@ -295,16 +406,61 @@
   }
   
   // 启动循环
-  playLoop();
+  // playLoop(); // 移动到脚本末尾，防止变量未初始化导致报错
+
+
+  // === 新增：页面恢复保护机制 ===
+  // 解决问题：页面切后台再切回时，累积的定时器或消息可能导致弹幕瞬时爆发
+  let isRecovering = false;
+  
+  // 监听可见性变化
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+      console.log("页面可见，启动恢复保护...");
+      isRecovering = true;
+      
+      // === 新增：清理积压 ===
+      // 如果队列太长，直接清空，避免瞬间爆发
+      if (pendingDanmus.length > 5) {
+          console.log(`清理积压弹幕: ${pendingDanmus.length} 条`);
+          pendingDanmus.length = 0; 
+      }
+      
+      // 清理屏幕上可能残留的弹幕（因为后台暂停动画可能导致堆积）
+      document.querySelectorAll(".danmu").forEach(el => el.remove());
+      
+      // === 结束清理 ===
+      
+      // 3秒后解除保护
+      setTimeout(() => {
+        isRecovering = false;
+        console.log("恢复保护结束，正常播放");
+      }, 3000);
+    }
+  });
+
+  // 辅助函数：限流检查
+  // 在恢复期内，限制每秒只能发 1 条
+  let lastRecoverTime = 0;
+  function shouldThrottle() {
+    if (!isRecovering) return false;
+    const now = Date.now();
+    if (now - lastRecoverTime < 1000) { // 1秒内
+      return true; // 丢弃/跳过
+    }
+    lastRecoverTime = now;
+    return false;
+  }
+  // === 结束新增 ===
 
   // 定时检查是否需要回放用户弹幕
   // 规则：每隔 REPLAY_INTERVAL，如果收集到的用户弹幕数量 < REPLAY_THRESHOLD，则将它们重新加入待播放队列
   setInterval(() => {
     if (userDanmuHistory.length > 0 && userDanmuHistory.length < CONFIG.REPLAY_THRESHOLD) {
       console.log("触发用户弹幕循环回放", userDanmuHistory);
-      // 将历史弹幕打乱后加入队列
+      // 将历史弹幕打乱后加入队列，并标记为 replay
       const shuffled = [...userDanmuHistory].sort(() => 0.5 - Math.random());
-      pendingDanmus.push(...shuffled);
+      pendingDanmus.push(...shuffled.map(t => ({ text: t, source: 'replay' })));
     }
   }, CONFIG.REPLAY_INTERVAL);
 
@@ -316,8 +472,14 @@
       // 处理弹幕
       if (msg.type === 'danmu' && msg.text) {
         const text = msg.text;
-        // 实时弹幕加入高优先级队列
-        pendingDanmus.push(text);
+        // 实时弹幕加入高优先级队列，标记为 live
+        // 将颜色和轨道参数也存入
+        pendingDanmus.push({ 
+          text: text, 
+          source: 'live',
+          track: msg.track,
+          color: msg.color
+        });
         // 记录到历史
         userDanmuHistory.push(text);
         saveHistory();
@@ -373,6 +535,9 @@
     colorLight : "#ffffff",
     correctLevel : QRCode.CorrectLevel.H
   });
+
+  // 启动弹幕循环 (修复初始化顺序问题)
+  playLoop();
 
 </script>
 

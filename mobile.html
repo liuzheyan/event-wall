@@ -234,42 +234,109 @@
   }
 
   // 弹幕轨道控制
-  // 手机屏幕较小，动态计算轨道数
-  // 假设每条弹幕高 40px
+  // 手机屏幕较小，但为了保持随机性，优先使用配置的 12 轨道
   const TRACK_HEIGHT = 40;
-  // 注意：这里需要重新获取 danmuStage 高度，或者监听 resize
-  // 简单起见，取窗口高度的一半作为参考，或者直接用 random top
-  let stageHeight = window.innerHeight * 0.6; 
-  let TRACK_COUNT = Math.floor(stageHeight / TRACK_HEIGHT);
+  // 优先使用配置，如果没有则动态计算 (兜底至少 5 条)
+  let TRACK_COUNT = CONFIG.TRACK_COUNT || Math.max(5, Math.floor(window.innerHeight * 0.6 / TRACK_HEIGHT));
   let trackIndex = 0;
 
   // 待播放队列（高优先级，存放实时接收的用户弹幕）
   const pendingDanmus = [];
   let isPaused = false;
 
+  // === 轨道管理系统 ===
+  // 记录每个轨道上次使用的时间
+  const lastTrackTime = new Array(12).fill(0); // 默认为12，后续会根据 TRACK_COUNT 动态调整
+
+  function getSmartTrack(totalTracks) {
+    const now = Date.now();
+    // 确保数组长度足够
+    if (lastTrackTime.length !== totalTracks) {
+        lastTrackTime.length = totalTracks;
+        for(let i=0; i<totalTracks; i++) {
+            if(!lastTrackTime[i]) lastTrackTime[i] = 0;
+        }
+    }
+
+    // 1. 寻找空闲轨道（2秒内未使用的）
+    const candidates = [];
+    for (let i = 0; i < totalTracks; i++) {
+      if (now - lastTrackTime[i] > 2000) {
+        candidates.push(i);
+      }
+    }
+
+    let selectedTrack;
+    if (candidates.length > 0) {
+      // 随机选一个空闲的
+      selectedTrack = candidates[Math.floor(Math.random() * candidates.length)];
+    } else {
+      // 2. 如果都忙，选最久没用的那个 (LRU)
+      let minTime = Infinity;
+      let minIndex = 0;
+      for (let i = 0; i < totalTracks; i++) {
+        if (lastTrackTime[i] < minTime) {
+          minTime = lastTrackTime[i];
+          minIndex = i;
+        }
+      }
+      selectedTrack = minIndex;
+    }
+
+    // 更新时间
+    lastTrackTime[selectedTrack] = now;
+    return selectedTrack;
+  }
+  // === 结束轨道管理 ===
+
   function getRandomColor() {
     const letters = '89ABCDEF'; 
     let color = '#';
     for (let i = 0; i < 6; i++) {
-      color += letters[Math.floor(Math.random() * 16)];
+      // 修复：字符集长度为 8，应乘以 8
+      color += letters[Math.floor(Math.random() * 8)];
     }
     return color;
   }
 
-  function pushDanmu(text, isMine = false) {
+  function pushDanmu(text, isMine = false, options = {}) {
+    // === 新增：后台不渲染 ===
+    if (document.hidden) return;
+    // === 结束新增 ===
+
     const el = document.createElement("div");
     el.className = `danmu ${isMine ? "mine" : ""}`;
     el.innerText = text;
     
-    // 如果不是自己的弹幕，也给个随机颜色，保持和 PC 端风格一致
+    // 颜色处理：优先使用传入的颜色，否则使用随机颜色
+    // 如果是自己发的，通常有特定样式，但也可能需要同步颜色？
+    // 这里保持原逻辑：mine 用 CSS 样式，others 用传入颜色或随机
     if (!isMine) {
-      el.style.color = getRandomColor();
+      el.style.color = options.color || getRandomColor();
     }
     
-    // 随机选择轨道，或者顺序循环
-    const track = trackIndex % TRACK_COUNT;
-    // top 使用百分比可能更安全，或者 px
-    el.style.top = (track * TRACK_HEIGHT + 20) + "px"; // +20 padding
+    // 随机选择轨道
+    // 使用配置的轨道数，如果未定义则默认为 12
+    const totalTracks = CONFIG.TRACK_COUNT || 12;
+    // 优先使用传入的 track，否则使用智能分配
+    const track = (typeof options.track === 'number') ? options.track : getSmartTrack(totalTracks);
+    
+    // 如果是外部传入的 track (比如系统弹幕)，我们也更新一下本地的 lastTrackTime，以免本地产生的弹幕跟它撞了
+    if (typeof options.track === 'number') {
+        // 确保数组初始化
+        if (lastTrackTime.length !== totalTracks) {
+            lastTrackTime.length = totalTracks;
+            for(let i=0; i<totalTracks; i++) { if(!lastTrackTime[i]) lastTrackTime[i] = 0; }
+        }
+        if (track < lastTrackTime.length) {
+            lastTrackTime[track] = Date.now();
+        }
+    }
+
+    // 使用百分比定位，确保在任何屏幕尺寸下都能显示所有轨道
+    // 留出一点顶部 padding (比如 2%)
+    const topPercent = (track / totalTracks) * 90 + 2; 
+    el.style.top = topPercent + "%";
     
     // 随机速度 8s - 12s
     const duration = 8 + Math.random() * 4;
@@ -310,23 +377,27 @@
 
     // text = filterText(text); // 不再需要替换，直接拦截
 
+    // 生成随机显示参数
+    const totalTracks = CONFIG.TRACK_COUNT || 12;
+    // 使用智能轨道分配，避免重叠
+    const track = getSmartTrack(totalTracks);
+    const color = getRandomColor();
+
     // 发送给服务器
     const msg = JSON.stringify({
       type: 'danmu',
       text: text,
       time: now,
-      id: clientId
+      id: clientId,
+      // 携带显示参数，保证各端一致
+      track: track,
+      color: color
     });
     client.publish(topic, msg);
     
-    // 自己发的直接上屏 (可选：如果服务器回传太慢，本地先上屏)
-    // 这里为了确保同步，也可以等服务器回传，但为了体验，本地先上屏
-    // 并且标记 isMine
-    // pushDanmu(text, true); // socket.on('danmu') 会收到自己的，如果不去重，会显示两次
-    // 策略：本地不上屏，等服务器广播回来。或者本地上屏，忽略服务器回来的自己那条。
-    // Socket.IO 默认 broadcast 不包含自己，但 io.emit 包含自己。
-    // 在 server.js 中我使用了 io.emit，所以会包含自己。
-    // 所以这里不要本地 pushDanmu，否则会重复。
+    // 立即本地上屏 (乐观 UI)，提升体验
+    // 使用相同的参数渲染
+    pushDanmu(text, true, { track, color });
 
     input.value = "";
     lastSend = now;
@@ -344,6 +415,17 @@
   // 默认弹幕循环控制
   // 策略：默认开启本地循环，保证单独打开手机端时有内容。
   // 一旦收到大屏端的广播 (sys_danmu)，说明大屏端在线，立即停止本地循环，完全听从大屏端指挥，以保证内容同步。
+  
+  // === 新增：页面恢复清理 ===
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") {
+       // 切回前台时，清空积压队列，并移除屏幕上可能卡住的旧弹幕
+       pendingDanmus.length = 0;
+       document.querySelectorAll(".danmu").forEach(el => el.remove());
+    }
+  });
+  // === 结束新增 ===
+
   let autoPlayTimer = setInterval(() => {
     if (isPaused) return;
 
@@ -361,9 +443,10 @@
         const msg = JSON.parse(message.toString());
 
         if (msg.type === 'danmu') {
-             // 判断是不是自己发的
-             const isMine = (msg.id === clientId); 
-             pushDanmu(msg.text, isMine);
+             // 过滤掉自己发的（因为已经本地上屏了，避免重复）
+             if (msg.id === clientId) return;
+             // 接收远端传来的显示参数
+             pushDanmu(msg.text, false, { track: msg.track, color: msg.color });
         } else if (msg.type === 'sys_danmu') {
              // 接收来自大屏端的默认弹幕广播
              
@@ -374,7 +457,8 @@
                  console.log("检测到大屏端在线，停止本地随机弹幕，转为同步模式");
              }
 
-             pushDanmu(msg.text, false);
+             // 使用大屏端传来的显示参数
+             pushDanmu(msg.text, false, { track: msg.track, color: msg.color });
         } else if (msg.type === 'control') {
              const { action, paused } = msg;
              if (action === "toggle") {
@@ -402,6 +486,93 @@
   });
 
   // (旧代码已清理) 
+
+  // === 新增：Loading 状态与图片预加载兜底 ===
+  (function() {
+    // 1. 注入 Loading CSS
+    const style = document.createElement('style');
+    style.innerHTML = `
+      ._fix_loading_overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: #000;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        transition: opacity 0.5s ease;
+      }
+      ._fix_loading_spinner {
+        width: 40px;
+        height: 40px;
+        border: 4px solid rgba(255, 255, 255, 0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: _fix_spin 1s ease-in-out infinite;
+      }
+      ._fix_loading_text {
+        margin-top: 16px;
+        color: #fff;
+        font-size: 14px;
+        opacity: 0.8;
+      }
+      @keyframes _fix_spin {
+        to { transform: rotate(360deg); }
+      }
+      ._fix_fade_out {
+        opacity: 0;
+        pointer-events: none;
+      }
+    `;
+    document.head.appendChild(style);
+
+    // 2. 插入 Loading HTML
+    const overlay = document.createElement('div');
+    overlay.className = '_fix_loading_overlay';
+    overlay.innerHTML = `
+      <div class="_fix_loading_spinner"></div>
+      <div class="_fix_loading_text">资源加载中...</div>
+    `;
+    document.body.appendChild(overlay);
+
+    // 3. 图片预加载与移除逻辑
+    function removeLoading() {
+      overlay.classList.add('_fix_fade_out');
+      setTimeout(() => {
+        if (overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay);
+        }
+      }, 500);
+    }
+
+    // 获取背景图 URL (从 CONFIG 中)
+    if (typeof CONFIG !== 'undefined' && CONFIG.BG_IMAGE) {
+      console.log("[Fix] Start preloading image:", CONFIG.BG_IMAGE);
+      const img = new Image();
+      img.onload = () => {
+        console.log("[Fix] Image loaded successfully");
+        removeLoading();
+      };
+      img.onerror = (e) => {
+        console.error("[Fix] Image load failed", e);
+        removeLoading(); // 失败也要移除，避免死锁
+      };
+      img.src = CONFIG.BG_IMAGE;
+
+      // 超时兜底 (5秒)
+      setTimeout(() => {
+        if (!overlay.classList.contains('_fix_fade_out')) {
+          console.warn("[Fix] Loading timeout");
+          removeLoading();
+        }
+      }, 5000);
+    } else {
+      // 如果没有配置图片，直接移除
+      removeLoading();
+    }
+  })();
+  // === 结束新增 ===
 
 </script>
 

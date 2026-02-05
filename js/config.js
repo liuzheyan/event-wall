@@ -7,7 +7,9 @@ const CONFIG = {
   // 发送冷却时间（毫秒）
   SEND_INTERVAL: 3000,
   // 弹幕轨道数量
-  TRACK_COUNT: 6,
+  // 增加轨道数以覆盖全屏 (假设 1080p 屏幕，高度 1080 / 56 ≈ 19)
+  // 设置为 12
+  TRACK_COUNT: 12,
   // 轨道高度
   TRACK_HEIGHT: 56,
   // 背景图
