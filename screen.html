@@ -277,6 +277,16 @@
         // 正常冷场，3秒一条
         text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
         pushDanmu(text);
+        
+        // 广播这条默认弹幕给手机端显示，保持内容同步
+        // 使用特殊类型以免被大屏端自己重复处理为用户弹幕
+        try {
+            client.publish(topic, JSON.stringify({
+                type: 'sys_danmu',
+                text: text
+            }));
+        } catch(e) {}
+
         nextDelay = 3000;
       }
     }

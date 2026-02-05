@@ -177,11 +177,10 @@ const DEFAULT_DANMU = [
   
 ];
 
-/** ===== 工具函数：文本过滤 ===== */
+/** ===== 工具函数：文本过滤与检查 ===== */
 function filterText(text) {
   let result = text;
   FORBIDDEN_WORDS.forEach(word => {
-    // 简单的正则替换，注意特殊字符转义问题，这里简化处理
     try {
       const reg = new RegExp(word, "ig");
       result = result.replace(reg, "***");
@@ -190,4 +189,21 @@ function filterText(text) {
     }
   });
   return result;
+}
+
+/**
+ * 检查是否包含敏感词
+ * @param {string} text 
+ * @returns {boolean}
+ */
+function hasSensitive(text) {
+  return FORBIDDEN_WORDS.some(word => {
+    try {
+      // 简单的包含判断，忽略大小写
+      const reg = new RegExp(word, "i");
+      return reg.test(text);
+    } catch (e) {
+      return false;
+    }
+  });
 }

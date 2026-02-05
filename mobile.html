@@ -247,10 +247,24 @@
   const pendingDanmus = [];
   let isPaused = false;
 
+  function getRandomColor() {
+    const letters = '89ABCDEF'; 
+    let color = '#';
+    for (let i = 0; i < 6; i++) {
+      color += letters[Math.floor(Math.random() * 16)];
+    }
+    return color;
+  }
+
   function pushDanmu(text, isMine = false) {
     const el = document.createElement("div");
     el.className = `danmu ${isMine ? "mine" : ""}`;
     el.innerText = text;
+    
+    // 如果不是自己的弹幕，也给个随机颜色，保持和 PC 端风格一致
+    if (!isMine) {
+      el.style.color = getRandomColor();
+    }
     
     // 随机选择轨道，或者顺序循环
     const track = trackIndex % TRACK_COUNT;
@@ -288,7 +302,13 @@
       return;
     }
 
-    text = filterText(text);
+    // 敏感词检查
+    if (hasSensitive(text)) {
+      showToast("请文明用语~");
+      return;
+    }
+
+    // text = filterText(text); // 不再需要替换，直接拦截
 
     // 发送给服务器
     const msg = JSON.stringify({
@@ -321,6 +341,20 @@
     }
   });
 
+  // 默认弹幕循环控制
+  // 策略：默认开启本地循环，保证单独打开手机端时有内容。
+  // 一旦收到大屏端的广播 (sys_danmu)，说明大屏端在线，立即停止本地循环，完全听从大屏端指挥，以保证内容同步。
+  let autoPlayTimer = setInterval(() => {
+    if (isPaused) return;
+
+    // 闲时播放默认弹幕
+    const text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
+    // 手机端少发点默认弹幕，免得乱
+    if(Math.random() > 0.5) return;
+    
+    pushDanmu(text);
+  }, 3000); 
+
   // 监听广播
   client.on('message', (tpc, message) => {
       try {
@@ -330,6 +364,17 @@
              // 判断是不是自己发的
              const isMine = (msg.id === clientId); 
              pushDanmu(msg.text, isMine);
+        } else if (msg.type === 'sys_danmu') {
+             // 接收来自大屏端的默认弹幕广播
+             
+             // 核心逻辑：一旦收到大屏端的同步信号，关闭本地自动播放
+             if (autoPlayTimer) {
+                 clearInterval(autoPlayTimer);
+                 autoPlayTimer = null;
+                 console.log("检测到大屏端在线，停止本地随机弹幕，转为同步模式");
+             }
+
+             pushDanmu(msg.text, false);
         } else if (msg.type === 'control') {
              const { action, paused } = msg;
              if (action === "toggle") {
@@ -356,22 +401,7 @@
       }
   });
 
-  // 默认弹幕循环（手机端也播放，营造氛围）
-  setInterval(() => {
-    if (isPaused) return;
-
-    let text;
-    // 优先播放实时队列 (其实 socket.on 已经直接 push 了，pendingDanmus 没用上)
-    // 这里的 pendingDanmus 逻辑可以去掉了，直接 socket.on 就 push
-    // 只有默认弹幕需要 interval
-    
-    // 闲时播放默认弹幕
-    text = DEFAULT_DANMU[Math.floor(Math.random() * DEFAULT_DANMU.length)];
-    // 手机端少发点默认弹幕，免得乱
-    if(Math.random() > 0.5) return;
-    
-    pushDanmu(text);
-  }, 3000); 
+  // (旧代码已清理) 
 
 </script>
 
