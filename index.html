@@ -127,7 +127,8 @@
   let topic = CONFIG.MQTT_TOPIC;
   
   // 显示当前 Topic
-  document.getElementById("topic-display").innerText = "频道: " + topic.split("/").pop(); // 只显示最后一段
+  // document.getElementById("topic-display").innerText = "频道: " + topic.split("/").pop(); // 只显示最后一段
+  document.getElementById("topic-display").innerText = " "; // 只显示最后一段
   
   console.log("Connecting to MQTT Broker:", CONFIG.MQTT_BROKER);
   console.log("Topic:", topic);

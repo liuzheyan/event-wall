@@ -404,6 +404,20 @@
       color: color
     });
     client.publish(topic, msg);
+
+    // 调用 PHP 接口保存到本地文件
+    fetch('api/Push.php', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        text: text,
+        time: now
+      })
+    }).catch(err => {
+      console.error("保存弹幕失败:", err);
+    });
     
     // 立即本地上屏 (乐观 UI)，提升体验
     // 使用相同的参数渲染
