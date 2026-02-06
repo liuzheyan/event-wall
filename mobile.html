@@ -29,14 +29,14 @@
       flex-direction: column;
       box-sizing: border-box;
       /* 背景图将通过 JS 动态设置 */
+      background-repeat: no-repeat;
+      background-position: center center;
       background-size: cover;
-      background-position: center;
     }
 
     .mask {
       position: absolute;
       inset: 0;
-      background: rgba(0, 0, 0, 0.4);
       z-index: 0;
     }
 
@@ -216,8 +216,9 @@
 
   /** ===== 逻辑 ===== */
   // 从配置读取背景图
-  const { BG_IMAGE } = CONFIG;
-  document.getElementById("page").style.backgroundImage = `url(${BG_IMAGE})`;
+  // 优先使用手机端专用背景图，如果没有则回退到 PC 端背景图
+  const bgImage = CONFIG.BG_IMAGE_MOBILE || CONFIG.BG_IMAGE;
+  document.getElementById("page").style.backgroundImage = `url(${bgImage})`;
 
   let lastSend = 0;
   const input = document.getElementById("input");
@@ -238,10 +239,8 @@
   }
 
   // 弹幕轨道控制
-  // 手机屏幕较小，但为了保持随机性，优先使用配置的 12 轨道
-  const TRACK_HEIGHT = 40;
-  // 优先使用配置，如果没有则动态计算 (兜底至少 5 条)
-  let TRACK_COUNT = CONFIG.TRACK_COUNT || Math.max(5, Math.floor(window.innerHeight * 0.6 / TRACK_HEIGHT));
+  // 关键修复：必须与大屏端保持一致的轨道数量 (12)，否则大屏发来的高轨道索引(如10,11)会导致手机端计算位置溢出屏幕
+  const TRACK_COUNT = CONFIG.TRACK_COUNT || 12; 
   let trackIndex = 0;
 
   // 待播放队列（高优先级，存放实时接收的用户弹幕）

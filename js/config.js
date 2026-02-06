@@ -17,7 +17,10 @@ const CONFIG = {
   // 统一时长以保证各端位置基本同步
   DANMU_DURATION: 12,
   // 背景图
-  BG_IMAGE: "img/photo.jpg",
+  BG_IMAGE: "img/pc_background.jpg",
+  // 手机端专用背景图 (如果不设置，默认使用 BG_IMAGE)
+  // 建议使用竖屏图片，比例 9:16
+  BG_IMAGE_MOBILE: "img/mobile_background.png",
   
   // === 新增需求配置 ===
   // 循环回放检查间隔（默认3分钟 = 180000ms）

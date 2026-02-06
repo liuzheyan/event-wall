@@ -10,22 +10,30 @@
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI";
       color: #fff;
+      /* 新增：为了在普通屏幕上居中显示大屏效果 */
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
     }
 
     /* ===== 大屏端样式 ===== */
     .screen-page {
       position: relative;
       width: 100vw;
-      height: 100vh;
+      /* 修改：适应 10*3.5m 比例 (100 / (10/3.5) = 35) */
+      height: 35vw;
       overflow: hidden;
-      background-size: cover;
+      /* 修改：强制拉伸图片以适应比例，防止裁剪 */
+      background-size: 100% 100%;
       background-position: center;
+      box-shadow: 0 0 30px rgba(0,0,0,0.5);
     }
 
     .mask {
       position: absolute;
       inset: 0;
-      background: rgba(0, 0, 0, 0.35);
       z-index: 0;
     }
 
@@ -82,6 +90,20 @@
       color: #fff;
       font-weight: 500;
     }
+
+    /* ===== 兜底模式：强制全屏覆盖 ===== */
+    /* 当屏幕比例适配出现问题时，使用此模式回归默认全屏 */
+    .screen-page.fallback-mode {
+      height: 100vh !important;
+      background-size: cover !important;
+      width: 100vw !important;
+      box-shadow: none !important;
+    }
+    /* 兜底模式下 body 需要占满，取消居中布局 */
+    body.fallback-body {
+        background: #000;
+        display: block !important;
+    }
   </style>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
   <!-- 引入 MQTT.js -->
@@ -95,6 +117,7 @@
       <button id="toggle">⏸ 暂停</button>
       <button id="clear">🧹 清屏</button>
       <button id="download">📥 导出数据</button>
+      <button id="toggleFit">🔄 适配切换</button>
     </div>
 
   <!-- 二维码展示区 -->
@@ -120,6 +143,25 @@
   if (urlParams.get('role') === 'admin') {
       document.getElementById("adminPanel").style.display = "block";
   }
+
+  // === 兜底机制：屏幕适配切换 ===
+  function toggleFitMode(forceFull) {
+      const isFallback = document.getElementById("app").classList.toggle("fallback-mode", forceFull);
+      document.body.classList.toggle("fallback-body", isFallback);
+      console.log("适配模式切换:", isFallback ? "兜底全屏" : "比例适配");
+  }
+
+  // 1. URL 参数触发: ?fit=full 或 ?fit=cover
+  const fitParam = urlParams.get('fit');
+  if (fitParam === 'full' || fitParam === 'cover') {
+      toggleFitMode(true);
+  }
+
+  // 2. 按钮触发
+  document.getElementById("toggleFit").onclick = () => {
+      toggleFitMode(); // 切换
+  };
+  // === 结束兜底机制 ===
 
   /** ===== 通信频道 (MQTT) ===== */
   // 优先使用 CONFIG 中的固定 Topic，方便调试
