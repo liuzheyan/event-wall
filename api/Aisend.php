@@ -1,0 +1,67 @@
+<?php
+    // 设置响应头，允许跨域
+    header('Access-Control-Allow-Origin: *');
+    header('Access-Control-Allow-Methods: POST, OPTIONS');
+    header('Access-Control-Allow-Headers: Content-Type');
+    header('Content-Type: application/json; charset=utf-8');
+
+    // 处理预检请求
+    if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+        exit(0);
+    }
+
+    // 只接收 POST 请求
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        http_response_code(405);
+        echo json_encode(['code' => 405, 'msg' => 'Method Not Allowed']);
+        exit;
+    }
+
+    // 获取原始 POST 数据
+    $input = file_get_contents('php://input');
+    $data = json_decode($input, true);
+    
+
+    // var_dump(input);
+    //     var_dump(data);exit;
+
+
+    // 验证数据
+    if (!isset($data['text']) || empty($data['text'])) {
+        http_response_code(400);
+        echo json_encode(['code' => 400, 'msg' => 'Missing text parameter']);
+        exit;
+    }
+
+    $text = $data['text'];
+
+    // 格式化日志内容
+    $logLine = sprintf("%s" . PHP_EOL, $text);
+
+    $logFile = '../data/aisend_data.txt';
+
+    // 写入文件 (追加模式)
+    // 强制检查并添加 UTF-8 BOM 头
+    // 如果文件已存在但没有 BOM 头，读取旧内容并添加 BOM
+    $hasBOM = false;
+    if (file_exists($logFile)) {
+        $handle = fopen($logFile, 'r');
+        $bom = fread($handle, 3);
+        fclose($handle);
+        if ($bom === "\xEF\xBB\xBF") {
+            $hasBOM = true;
+        }
+    }
+
+    if (!$hasBOM) {
+        $oldContent = file_exists($logFile) ? file_get_contents($logFile) : '';
+        file_put_contents($logFile, "\xEF\xBB\xBF" . $oldContent);
+    }
+
+    if (file_put_contents($logFile, $logLine, FILE_APPEND | LOCK_EX) !== false) {
+        echo json_encode(['code' => 200, 'msg' => 'Success']);
+    } else {
+        http_response_code(500);
+        echo json_encode(['code' => 500, 'msg' => 'Failed to write file']);
+    }
+?>

@@ -17,10 +17,7 @@ const CONFIG = {
   // 统一时长以保证各端位置基本同步
   DANMU_DURATION: 12,
   // 背景图
-  BG_IMAGE: "img/pc_background.jpg",
-  // 手机端专用背景图 (如果不设置，默认使用 BG_IMAGE)
-  // 建议使用竖屏图片，比例 9:16
-  BG_IMAGE_MOBILE: "img/mobile_background.png",
+  BG_IMAGE: "img/photo.jpg",
   
   // === 新增需求配置 ===
   // 循环回放检查间隔（默认3分钟 = 180000ms）
@@ -65,6 +62,18 @@ const FORBIDDEN_WORDS = [
   "枪支", "毒品", "海洛因", "冰毒", "k粉", "摇头丸", "大麻", "炸弹",
   "黄色", "做爱", "约炮", "裸聊", "兼职", "刷单"
 ];
+
+const AISEND_DATA = ''
+
+fetch('../data/aisend_data.txt')
+  .then(res => res.text())
+  .then(text => {
+    AISEND_DATA = text
+    console.log('AISEND_DATA loaded:', AISEND_DATA)
+  })
+  .catch(err => {
+    console.error('load aisend_data.txt failed', err)
+  })
 
 /** ===== 默认年会弹幕库 ===== */
 const DEFAULT_DANMU = [
@@ -196,39 +205,9 @@ const DEFAULT_DANMU = [
   "祝大家发财！",
   "明年再创辉煌！",
   "让我们红尘作伴，活得潇潇洒洒！",
-  "对酒当歌，人生几何！"
+  "对酒当歌，人生几何！",
+  
 ];
-
-/**
- * 动态加载外部弹幕数据 (aisend_data.txt)
- * 并合并到 DEFAULT_DANMU 中
- */
-(function loadExternalDanmu() {
-  // 也就是相对于 HTML 文件的路径
-  fetch('data/aisend_data.txt')
-    .then(res => {
-      if(res.ok) return res.text();
-      throw new Error('Network response was not ok.');
-    })
-    .then(text => {
-      const lines = text.split(/\r?\n/);
-      let count = 0;
-      lines.forEach(line => {
-        // 去除首尾空格
-        const str = line.trim();
-        // 非空且去重
-        if (str && !DEFAULT_DANMU.includes(str)) {
-          DEFAULT_DANMU.push(str);
-          count++;
-        }
-      });
-      console.log(`[Config] 已加载外部弹幕 ${count} 条`);
-    })
-    .catch(err => {
-      // 忽略错误，可能是文件不存在，不影响主流程
-      console.warn("[Config] 加载外部弹幕失败 (如果是静态文件未部署可能是路径问题):", err);
-    });
-})();
 
 /** ===== 工具函数：文本过滤与检查 ===== */
 function filterText(text) {
@@ -260,4 +239,3 @@ function hasSensitive(text) {
     }
   });
 }
-
