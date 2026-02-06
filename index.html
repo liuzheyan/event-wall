@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
-  <title>年会弹幕 - 大屏端</title>
+  <title></title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" href="img/favicon.ico" type="image/x-icon">
   <style>
@@ -136,6 +136,10 @@
 
   // 自动检测：如果是手机/窄屏设备 (< 768px)
   const isMobile = window.innerWidth < 768;
+
+  // 生成二维码的宽高
+  // 使用屏幕宽度的百分比，但不超过最大值
+  const qrSize = Math.min(window.innerWidth * 0.20, 160); // 20% 宽度，最大 128px
 
   // 设置背景图
   // 如果是手机端打开大屏页，优先使用手机背景图
@@ -700,8 +704,8 @@
   
   new QRCode(document.getElementById("qrcode"), {
     text: mobileUrl,
-    width: 128,
-    height: 128,
+    width: qrSize,
+    height: qrSize,
     colorDark : "#000000",
     colorLight : "#ffffff",
     correctLevel : QRCode.CorrectLevel.H
