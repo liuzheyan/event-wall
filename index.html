@@ -32,7 +32,7 @@
       position: absolute;
       z-index: 1;
       white-space: nowrap;
-      font-size: 24px;
+      font-size: 50px;
       color: #fff;
       animation: move linear forwards;
       text-shadow: 0 0 8px rgba(0,0,0,0.8);
@@ -90,12 +90,12 @@
 
 <div id="app" class="screen-page">
   <div class="mask"></div>
-  <div class="control-panel">
-    <button id="toggle">⏸ 暂停</button>
-    <button id="clear">🧹 清屏</button>
-    <button id="download" style="display: none;">📥 导出数据</button>
-  </div>
-  
+    <div class="control-panel" id="adminPanel" style="display: none;">
+      <button id="toggle">⏸ 暂停</button>
+      <button id="clear">🧹 清屏</button>
+      <button id="download">📥 导出数据</button>
+    </div>
+
   <!-- 二维码展示区 -->
   <div class="qr-container">
     <div id="qrcode"></div>
@@ -112,6 +112,13 @@
 
   // 设置背景图
   document.getElementById("app").style.backgroundImage = `url(${BG_IMAGE})`;
+
+  /** ===== 权限控制 ===== */
+  // 检查 URL 参数 role=admin
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('role') === 'admin') {
+      document.getElementById("adminPanel").style.display = "block";
+  }
 
   /** ===== 通信频道 (MQTT) ===== */
   // 优先使用 CONFIG 中的固定 Topic，方便调试
@@ -633,10 +640,9 @@
     console.warn("注意：当前是 file:// 协议，手机扫码可能无法直接访问。建议使用 http 服务器 (如 Live Server, GitHub Pages).");
   } else {
     // HTTP/HTTPS 协议
-    const urlObj = new URL(currentUrl);
-    // 替换 screen.html 为 mobile.html
-    const pathname = urlObj.pathname.replace(/screen\.html$/, 'mobile.html');
-    mobileUrl = urlObj.origin + pathname + `?topic=${encodeURIComponent(topic)}`;
+    const url = new URL('mobile.html', window.location.href);
+    url.searchParams.set('topic', topic);
+    mobileUrl = url.href;
   }
   
   console.log("Mobile URL:", mobileUrl);
