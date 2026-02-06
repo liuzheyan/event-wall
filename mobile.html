@@ -31,7 +31,8 @@
       /* 背景图将通过 JS 动态设置 */
       background-repeat: no-repeat;
       background-position: center center;
-      background-size: cover;
+      /* 强制拉伸填满屏幕，确保所有手机都能看到完整背景内容（不裁剪） */
+      background-size: 100% 100%;
     }
 
     .mask {

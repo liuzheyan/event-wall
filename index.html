@@ -153,7 +153,10 @@
 
   // 1. URL 参数触发: ?fit=full 或 ?fit=cover
   const fitParam = urlParams.get('fit');
-  if (fitParam === 'full' || fitParam === 'cover') {
+  // 自动检测：如果是手机/窄屏设备 (< 768px)，默认开启兜底全屏模式，防止显示成细长条
+  const isMobile = window.innerWidth < 768;
+  
+  if (fitParam === 'full' || fitParam === 'cover' || isMobile) {
       toggleFitMode(true);
   }
 
