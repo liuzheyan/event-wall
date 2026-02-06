@@ -134,8 +134,13 @@
   // 从 CONFIG 对象中读取
   const { TRACK_COUNT, TRACK_HEIGHT, BG_IMAGE } = CONFIG;
 
+  // 自动检测：如果是手机/窄屏设备 (< 768px)
+  const isMobile = window.innerWidth < 768;
+
   // 设置背景图
-  document.getElementById("app").style.backgroundImage = `url(${BG_IMAGE})`;
+  // 如果是手机端打开大屏页，优先使用手机背景图
+  const targetBg = (isMobile && CONFIG.BG_IMAGE_MOBILE) ? CONFIG.BG_IMAGE_MOBILE : BG_IMAGE;
+  document.getElementById("app").style.backgroundImage = `url(${targetBg})`;
 
   /** ===== 权限控制 ===== */
   // 检查 URL 参数 role=admin
@@ -153,8 +158,7 @@
 
   // 1. URL 参数触发: ?fit=full 或 ?fit=cover
   const fitParam = urlParams.get('fit');
-  // 自动检测：如果是手机/窄屏设备 (< 768px)，默认开启兜底全屏模式，防止显示成细长条
-  const isMobile = window.innerWidth < 768;
+  // 复用上方的 isMobile 变量
   
   if (fitParam === 'full' || fitParam === 'cover' || isMobile) {
       toggleFitMode(true);
